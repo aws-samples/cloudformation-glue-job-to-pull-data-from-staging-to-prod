@@ -1,0 +1,225 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: A Step Function to run a Glue Job to pull data into a staging table, push it onto prod and then clear staging.
+
+Parameters: 
+  GlueJobName:
+    Type: String
+    Description: Name of glue job
+    Default: staging-csat
+  
+  AWSLambdaExecuteArn:
+    Type: String
+    Description: ARN of the AWSLambdaExecute policy
+    Default: arn:aws:iam::aws:policy/AWSLambdaExecute
+  
+  AWSLambdaInvokeArn:
+    Type: String
+    Description: ARN of the AWSLambdaRole role
+    Default: arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+
+  MySQLEndpoint:
+    Type: String
+    Description: Endpoint of the MySQL database
+    Default: "127.0.0.1"
+  
+  MySQLStagingDbName:
+    Type: String
+    Description: Name of the MySQL staging database
+    Default: staging_db
+  
+  MySQLPort:
+    Type: String
+    Description: Port of the MySQL database
+    Default: "3306"
+  
+  MySQLUsername:
+    Type: String
+    Description: Username to connect to the MySQL database
+    Default: mysql_user
+  
+  MySQLPassword:
+    Type: String
+    Description: Password to connect to the MySQL database
+    Default: password123
+
+Resources:
+  MySQLEndpointParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: mysql-endpoint
+      Value: !Ref MySQLEndpoint
+
+  MySQLDBNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: mysql-staging-db-name
+      Value: !Ref MySQLStagingDbName
+  
+  MySQLUsernameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: mysql-username
+      Value: !Ref MySQLUsername
+
+  MySQLPortParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: mysql-port
+      Value: !Ref MySQLPort
+
+  MySQLPasswordParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: mysql-password
+      Value: !Ref MySQLPassword
+
+  StepFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Role for Step Functions to invoke Lambda functions
+      Path: /
+      ManagedPolicyArns:
+        - !Ref AWSLambdaInvokeArn
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action:
+              - sts:AssumeRole
+  
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Role for Lambda functions to use when executing
+      Path: /
+      ManagedPolicyArns:
+        - !Ref AWSLambdaExecuteArn
+      Policies:
+        - PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub 
+                    - "arn:aws:ssm:${region}:${accountid}:parameter/mysql-endpoint"
+                    - region: !Ref AWS::Region
+                      accountid: !Ref AWS::AccountId
+                  - !Sub 
+                    - "arn:aws:ssm:${region}:${accountid}:parameter/mysql-staging-db-name"
+                    - region: !Ref AWS::Region
+                      accountid: !Ref AWS::AccountId
+                  - !Sub 
+                    - "arn:aws:ssm:${region}:${accountid}:parameter/mysql-port"
+                    - region: !Ref AWS::Region
+                      accountid: !Ref AWS::AccountId
+                  - !Sub 
+                    - "arn:aws:ssm:${region}:${accountid}:parameter/mysql-username"
+                    - region: !Ref AWS::Region
+                      accountid: !Ref AWS::AccountId
+                  - !Sub 
+                    - "arn:aws:ssm:${region}:${accountid}:parameter/mysql-password"
+                    - region: !Ref AWS::Region
+                      accountid: !Ref AWS::AccountId
+          PolicyName: iamp_allow_ssm_get_parameter
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  UpdateProdFromStagingDataLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.8
+      Handler: lambda_function.lambda_handler
+      Code: lambdas/updateProdFromStagingTable/
+
+  ClearStagingTableLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.8
+      Handler: lambda_function.lambda_handler
+      Code: lambdas/deleteStagingTableData/
+
+  ClearProdTableLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.8
+      Handler: lambda_function.lambda_handler
+      Code: lambdas/deleteProdTableData/
+
+  StateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: 
+        !Sub 
+          - '${GlueJob}-state-machine'
+          - GlueJob: !Ref GlueJobName
+      RoleArn: !GetAtt StepFunctionRole.Arn
+      DefinitionString: |-
+        {
+          "Comment": "A simple AWS Step Functions state machine that runs a glue job to update the employees prod table.",
+          "StartAt": "Clear Staging Table",
+          "States": {
+            "Clear Staging Table": {
+              "Type": "Task",
+              "Resource": "${ClearStagingFunc}",
+              "ResultPath": null,
+              "Next": "Run Glue Job"
+              },
+            "Run Glue Job": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${GlueJobName}"
+              },
+             "ResultPath": null,
+              "Next": "Update Prod Table From Staging"
+              },
+            "Update Prod Table From Staging": {
+              "Type": "Task",
+              "Resource": "${UpdateProdFunc}",
+              "ResultPath": null,
+              "Retry": [ {
+                "ErrorEquals" : ["Lambda.Unknown"],
+                "IntervalSeconds":  5,
+                "MaxAttempts": 3,
+                "BackoffRate":  2
+              }],
+              "Next": "Wait 15 seconds"
+            },
+            "Wait 15 seconds": {
+              "Comment": "A Wait state delays the state machine from continuing for a specified time.",
+              "Type": "Wait",
+              "Seconds": 15,
+              "Next": "Delete Staging Table Data"
+            },
+            "Delete Staging Table Data": {
+              "Type": "Task",
+              "Resource": "${ClearStagingFunc}",
+              "End": true
+            }
+          }
+        }
+      DefinitionSubstitutions: 
+        GlueJobName: !Ref GlueJobName
+        UpdateProdFunc: !GetAtt UpdateProdFromStagingDataLambda.Arn
+        ClearStagingFunc: !GetAtt ClearStagingTableLambda.Arn

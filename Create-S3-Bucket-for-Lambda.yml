@@ -1,0 +1,14 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Creates a bucket which we'll store Lambda deployment packages in."
+Resources:
+  LambdaZipBucket:
+    Type: AWS::S3::Bucket
+Outputs:
+  LambdaZipBucketName:
+    Description: Name of the bucket for Lambda deployment packages
+    Value: !Ref LambdaZipBucket
+    Export:
+      Name: LambdaZipBucketName

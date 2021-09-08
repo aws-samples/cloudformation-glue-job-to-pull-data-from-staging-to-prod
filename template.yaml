@@ -1,0 +1,470 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: AWS Serverless backend.
+Resources:
+  BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref Bucket
+      PolicyDocument:
+        Version: '2008-10-17'
+        Id: Policy1358882281037
+        Statement:
+        - Sid: Stmt1358882255300
+          Effect: Allow
+          Principal:
+            AWS:
+              - arn:aws:iam::934700192993:root
+              - arn:aws:iam::255105206797:role/hammerstone_to_s3
+          Action:
+            - s3:List*
+            - s3:Get*
+            - s3:Put*
+            - s3:Delete*
+          Resource:
+            - arn:aws:s3:::aws-data/*
+            - arn:aws:s3:::aws-data
+        - Effect: Deny
+          Principal: '*'
+          Action: '*'
+          Resource: arn:aws:s3:::aws-data/*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+
+  Bucket:
+    Type: 'AWS::S3::Bucket'      
+    Properties:
+      BucketName: "aws-data"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            # KMSMasterKeyID: becba9d7-bb39-4666-bf70-6039c3170a6d
+            # SSEAlgorithm: aws:kms
+      LifecycleConfiguration:
+        Rules:
+          - Id: SAM-10-Days-Rule
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 10
+      VersioningConfiguration:
+        Status: Enabled
+
+  deleteStagingTableData:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: deleteStagingTableData/
+      Description: 'Dynamic Function which truncates the given staging table'
+      MemorySize: 2560
+      Timeout: 900
+      Role: arn:aws:iam::815423538953:role/API-Lambda-Role
+      VpcConfig:
+        SecurityGroupIds:
+          - sg-037694c2eba9df875
+        SubnetIds:
+          - subnet-069ac8cb1704b4cf8
+          - subnet-022c6613a366b1cb8
+      Layers:
+        - 'arn:aws:lambda:eu-west-2:815423538953:layer:myPymysqlLayer:1'
+
+  updateProdFromStagingTable:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: updateProdFromStagingTable/
+      Description: ''
+      MemorySize: 1280
+      Timeout: 600
+      Role: arn:aws:iam::815423538953:role/API-Lambda-Role
+      VpcConfig:
+        SecurityGroupIds:
+          - sg-037694c2eba9df875
+        SubnetIds:
+          - subnet-069ac8cb1704b4cf8
+          - subnet-022c6613a366b1cb8
+      Layers:
+        - 'arn:aws:lambda:eu-west-2:815423538953:layer:myPymysqlLayer:1'
+
+  triggerEmployeesStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerEmployeesStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: Enablement_DWH/employees/result/
+  
+  triggerKnetStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerKnetStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: Enablement_DWH/knet/result/
+
+  triggerArtifactsStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerArtifactsStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/artifacts/ 
+                  - Name: suffix
+                    Value: .parquet
+ 
+  triggerSkillsStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerSkillsStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/psa_skills_certs/
+                  - Name: suffix
+                    Value: .parquet
+
+  triggerMindtickleStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerMindtickleStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: Enablement_DWH/mindtickle/result/
+
+  triggerUtilStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerUtilStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/utilization_detail_c/
+                  - Name: suffix
+                    Value: .parquet
+
+
+  triggerEvaStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerEvaStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/est_vs_actuals/
+                  - Name: suffix
+                    Value: .parquet
+
+  triggerContactsStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerContactsStateMachine/
+      Description: 'triggers the staging-contacts-state-machine'
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/contact/
+                  - Name: suffix
+                    Value: .parquet
+
+  triggerTimecardsStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerTimecardsStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/timecard_c/
+                  - Name: suffix
+                    Value: .parquet
+
+  triggerMissingTimecardsStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerMissingTimecardsStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/missing_timecard/
+                  - Name: suffix
+                    Value: .parquet
+
+
+  triggerCsatByResourceStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerCsatByResourceStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/csat_by_resource/
+                  - Name: suffix
+                    Value: .parquet
+
+
+  triggerCsatStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerCsatStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: quasarpse/csat/
+                  - Name: suffix
+                    Value: .parquet
+
+  triggerTfcStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerTfcStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: manual_uploads/TFC/
+                  - Name: suffix
+                    Value: .csv
+
+  triggerPulseStateMachine:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: triggerPulseStateMachine/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/API-Lambda-Role'
+      Events:
+        BucketEvent1:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events:
+              - 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: manual_uploads/pulse/
+                  - Name: suffix
+                    Value: .csv
+
+    
+  checkTerminationProtection:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: checkTerminationProtection/
+      Description: ''
+      MemorySize: 128
+      Timeout: 10
+      Role: 'arn:aws:iam::815423538953:role/service-role/LambdaConfigPermissions'
